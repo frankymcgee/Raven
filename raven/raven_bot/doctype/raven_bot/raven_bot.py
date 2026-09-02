@@ -48,7 +48,7 @@ class RavenBot(Document):
 		openai_assistant_id: DF.Data | None
 		openai_vector_store_id: DF.Data | None
 		raven_user: DF.Link | None
-		reasoning_effort: DF.Literal["low", "medium", "high"]
+		reasoning_effort: DF.Literal["none", "low", "medium", "high", "xhigh", "max"]
 		temperature: DF.Float
 		top_p: DF.Float
 		use_google_document_parser: DF.Check
