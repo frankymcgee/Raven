@@ -40,6 +40,27 @@ from .functions import (
 )
 
 
+OPENAI_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def uses_openai_reasoning_parameters(bot_doc) -> bool:
+	model = str(bot_doc.model or "").lower()
+	return bot_doc.model_provider == "OpenAI" and model.startswith(OPENAI_REASONING_MODEL_PREFIXES)
+
+
+def get_model_settings(bot_doc) -> ModelSettings:
+	settings = ModelSettings()
+
+	if uses_openai_reasoning_parameters(bot_doc):
+		if bot_doc.reasoning_effort:
+			settings.reasoning_effort = bot_doc.reasoning_effort
+		return settings
+
+	settings.temperature = bot_doc.temperature
+	settings.top_p = bot_doc.top_p
+	return settings
+
+
 class RavenAgentManager:
 	"""Manages Raven agents with local LLM/OpenAI support"""
 
@@ -399,12 +420,7 @@ IMPORTANT: When calling tools, the SDK will handle the tool execution automatica
 
 			instructions = instructions + tools_instruction
 
-		# Create model settings
-		model_settings = ModelSettings(temperature=self.bot_doc.temperature, top_p=self.bot_doc.top_p)
-
-		# Add reasoning_effort if available (for o-series models)
-		if hasattr(self.bot_doc, "reasoning_effort") and self.bot_doc.reasoning_effort:
-			model_settings.reasoning_effort = self.bot_doc.reasoning_effort
+		model_settings = get_model_settings(self.bot_doc)
 
 		# Create agent - ALWAYS pass empty list instead of None for tools
 		# Get the model from the provider
