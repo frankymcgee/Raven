@@ -101,36 +101,12 @@ class RavenBot(Document):
 
 			self.db_set("raven_user", raven_user.name)
 
-		if self.is_ai_bot:
-			# Only create OpenAI assistant if using OpenAI provider (not for Agents SDK)
-			if self.model_provider == "OpenAI":
-				# Skip assistant creation if we're using Agents SDK even with OpenAI
-				# TODO: In future, we should completely phase out assistant creation
-				if not self.openai_assistant_id:
-					self.create_openai_assistant()
-				else:
-					self.update_openai_assistant()
-			else:
-				# For Local LLM or future Agents SDK, no assistant needed
-				if self.openai_assistant_id:
-					# Clear assistant ID if switching from OpenAI to Local LLM
-					self.db_set("openai_assistant_id", None)
-					return
-
-	def before_insert(self):
-		if self.is_ai_bot and not self.openai_assistant_id:
-			# Only create OpenAI assistant if using OpenAI provider (not for Agents SDK)
-			if self.model_provider == "OpenAI":
-				# Skip assistant creation for Local LLM
-				self.create_openai_assistant()
-			elif self.model_provider == "Local LLM":
-				# For Local LLM, we don't need an OpenAI assistant
-				return
+		# Assistants were replaced by the Agents SDK. Clear legacy IDs without
+		# making a request to the retired Assistants API.
+		if self.openai_assistant_id:
+			self.db_set("openai_assistant_id", None)
 
 	def on_trash(self):
-		if self.openai_assistant_id:
-			self.delete_openai_assistant()
-
 		if self.raven_user:
 			frappe.db.set_value("Raven User", self.raven_user, "bot", None)
 			self.db_set("raven_user", None)
