@@ -17,15 +17,10 @@ def handle_bot_dm(message, bot):
 	"""
 	Function to handle direct messages to the bot.
 
-	Routes to Agents SDK for bots with model_provider, falls back to Assistants API for legacy bots.
+	All supported providers use the Agents SDK. OpenAI requests are sent through
+	the Responses API by :class:`RavenAgentManager`.
 	"""
-
-	# Check if bot uses new Agents SDK
-	if bot.model_provider in ["OpenAI", "Local LLM"] and not bot.openai_assistant_id:
-		return handle_bot_dm_with_agents(message, bot)
-	else:
-		# Use old Assistants API for legacy bots
-		return handle_bot_dm_with_assistants(message, bot)
+	return handle_bot_dm_with_agents(message, bot)
 
 
 def handle_bot_dm_with_agents(message, bot):
@@ -192,17 +187,13 @@ def handle_ai_thread_message(message, channel):
 	"""
 	Function to handle messages in an AI thread.
 
-	Routes to Agents SDK for bots with model_provider, falls back to Assistants API for legacy bots.
+	Conversation history is rebuilt from Raven messages, so legacy threads can
+	continue without calling the retired OpenAI Threads API.
 	"""
 
 	bot = frappe.get_cached_doc("Raven Bot", channel.thread_bot)
 
-	# Check if bot uses new Agents SDK
-	if bot.model_provider in ["OpenAI", "Local LLM"] and not bot.openai_assistant_id:
-		return handle_ai_thread_message_with_agents(message, channel, bot)
-	else:
-		# Use old Assistants API for legacy bots
-		return handle_ai_thread_message_with_assistants(message, channel, bot)
+	return handle_ai_thread_message_with_agents(message, channel, bot)
 
 
 def handle_ai_thread_message_with_agents(message, channel, bot):
