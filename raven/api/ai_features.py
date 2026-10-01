@@ -44,17 +44,17 @@ def get_open_ai_version():
 @frappe.whitelist()
 def get_openai_available_models():
 	"""
-	API to get the available OpenAI models for assistants
+	Return text models compatible with Raven's Responses API integration.
 	"""
 	frappe.has_permission(doctype="Raven Bot", ptype="read", throw=True)
 	from raven.ai.openai_client import get_openai_models
 
 	models = get_openai_models()
 
-	valid_prefixes = ["gpt-4", "gpt-3.5", "o1", "o3-mini"]
+	valid_prefixes = ["gpt-5", "gpt-4", "gpt-3.5", "o1", "o3", "o4"]
 
 	# Model should not contain these words
-	invalid_models = ["realtime", "transcribe", "search", "audio"]
+	invalid_models = ["realtime", "transcribe", "search", "audio", "image", "codex", "chat"]
 
 	compatible_models = []
 

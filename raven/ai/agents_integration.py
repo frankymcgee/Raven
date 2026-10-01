@@ -40,6 +40,27 @@ from .functions import (
 )
 
 
+OPENAI_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def uses_openai_reasoning_parameters(bot_doc) -> bool:
+	model = str(bot_doc.model or "").lower()
+	return bot_doc.model_provider == "OpenAI" and model.startswith(OPENAI_REASONING_MODEL_PREFIXES)
+
+
+def get_model_settings(bot_doc) -> ModelSettings:
+	settings = ModelSettings()
+
+	if uses_openai_reasoning_parameters(bot_doc):
+		if bot_doc.reasoning_effort:
+			settings.reasoning_effort = bot_doc.reasoning_effort
+		return settings
+
+	settings.temperature = bot_doc.temperature
+	settings.top_p = bot_doc.top_p
+	return settings
+
+
 class RavenAgentManager:
 	"""Manages Raven agents with local LLM/OpenAI support"""
 
@@ -292,35 +313,6 @@ class RavenAgentManager:
 			if hasattr(self.bot_doc, "openai_vector_store_id") and self.bot_doc.openai_vector_store_id:
 				vector_store_ids = [self.bot_doc.openai_vector_store_id]
 
-			# If not found on bot, check the assistant
-			elif hasattr(self.bot_doc, "openai_assistant_id") and self.bot_doc.openai_assistant_id:
-				try:
-					# Create a synchronous client for assistant operations
-					from openai import OpenAI
-
-					api_key = self.settings.get_password("openai_api_key")
-					sync_client = OpenAI(
-						api_key=api_key,
-						organization=self.settings.openai_organisation_id,
-						project=self.settings.openai_project_id if self.settings.openai_project_id else None,
-					)
-
-					assistant = sync_client.beta.assistants.retrieve(self.bot_doc.openai_assistant_id)
-
-					# Check if assistant has vector store IDs in tool_resources
-					if hasattr(assistant, "tool_resources") and assistant.tool_resources:
-						# Access the vector store IDs
-						file_search = getattr(assistant.tool_resources, "file_search", None)
-						if file_search and hasattr(file_search, "vector_store_ids"):
-							vs_ids = file_search.vector_store_ids
-							if vs_ids:
-								vector_store_ids = vs_ids
-
-				except Exception as e:
-					frappe.log_error(
-						f"Error retrieving assistant: {str(e)}\n{traceback.format_exc()}", "File Search Tool Error"
-					)
-
 			# If still no vector store, log and return None
 			if not vector_store_ids:
 				return None
@@ -428,12 +420,7 @@ IMPORTANT: When calling tools, the SDK will handle the tool execution automatica
 
 			instructions = instructions + tools_instruction
 
-		# Create model settings
-		model_settings = ModelSettings(temperature=self.bot_doc.temperature, top_p=self.bot_doc.top_p)
-
-		# Add reasoning_effort if available (for o-series models)
-		if hasattr(self.bot_doc, "reasoning_effort") and self.bot_doc.reasoning_effort:
-			model_settings.reasoning_effort = self.bot_doc.reasoning_effort
+		model_settings = get_model_settings(self.bot_doc)
 
 		# Create agent - ALWAYS pass empty list instead of None for tools
 		# Get the model from the provider
