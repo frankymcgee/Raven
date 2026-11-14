@@ -38,9 +38,7 @@ class TestChatImageInput(TestCase):
 		path = Path(directory) / "photo.jpg"
 		path.write_bytes(self.photo)
 		self.file = Mock(is_remote_file=False, get_full_path=Mock(return_value=path))
-		self.get_doc = self.enterContext(
-			patch("raven.ai.ai.frappe.get_doc", return_value=self.file)
-		)
+		self.get_doc = self.enterContext(patch("raven.ai.ai.frappe.get_doc", return_value=self.file))
 		self.get_value = self.enterContext(patch("raven.ai.ai.frappe.db"))
 		self.get_value.get_value.return_value = "FILE-PHOTO"
 		self.publish = self.enterContext(patch("raven.ai.ai.frappe.publish_realtime"))
@@ -63,9 +61,7 @@ class TestChatImageInput(TestCase):
 					self.image_message.text = caption
 					self.image_message.content = caption or "photo.jpg"
 					if caption:
-						process_message_with_agent(
-							self.image_message, self.bot, "photo-thread", True
-						)
+						process_message_with_agent(self.image_message, self.bot, "photo-thread", True)
 					else:
 						channel = SimpleNamespace(name="photo-thread", thread_bot="PERI")
 						handle_ai_thread_message(self.image_message, channel)
@@ -76,9 +72,7 @@ class TestChatImageInput(TestCase):
 					prefix, encoded_photo = request["image_url"].split(",", 1)
 					self.assertEqual(prefix, "data:image/jpeg;base64")
 					self.assertEqual(base64.b64decode(encoded_photo), self.photo)
-					self.bot.send_message.assert_called_with(
-						channel_id="photo-thread", text="The photo is blue."
-					)
+					self.bot.send_message.assert_called_with(channel_id="photo-thread", text="The photo is blue.")
 		self.file.has_permission.assert_called_with("read", user=self.image_message.owner)
 		self.get_doc.assert_called_with("File", "FILE-PHOTO")
 

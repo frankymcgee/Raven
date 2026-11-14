@@ -602,7 +602,9 @@ def process_message_with_agent(
 	except Exception as e:
 		import traceback
 
-		frappe.log_error(f"AI message error: {str(e)}\n\nTraceback:\n{traceback.format_exc()}", "Raven AI")
+		frappe.log_error(
+			f"AI message error: {str(e)}\n\nTraceback:\n{traceback.format_exc()}", "Raven AI"
+		)
 		# Send error message
 		error_text = "I encountered an error while processing your request."
 		if bot.debug_mode:
