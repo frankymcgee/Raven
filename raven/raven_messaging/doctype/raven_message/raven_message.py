@@ -352,6 +352,7 @@ class RavenMessage(Document):
 				message=self,
 				timeout=600,
 				channel=channel_doc,
+				enqueue_after_commit=True,
 				at_front=True,
 				job_name="handle_ai_thread_message",
 			)
@@ -391,6 +392,7 @@ class RavenMessage(Document):
 			message=self,
 			bot=bot,
 			timeout=600,
+			enqueue_after_commit=True,
 			job_name="handle_bot_dm",
 			at_front=True,
 		)

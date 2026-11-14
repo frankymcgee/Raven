@@ -1,4 +1,9 @@
+import base64
+from io import BytesIO
+
 import frappe
+from frappe.utils import cint
+from PIL import Image
 
 # Import agents integration - no fallback needed
 from raven.ai.agents_integration import handle_ai_request_sync
@@ -11,6 +16,8 @@ from raven.ai.openai_client import (
 	file_search_file_types,
 	get_open_ai_client,
 )
+
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 def handle_bot_dm(message, bot):
@@ -201,8 +208,7 @@ def handle_ai_thread_message_with_agents(message, channel, bot):
 	Handle thread messages using Agents SDK.
 	"""
 
-	# Skip file/image messages without text - they'll be handled when the user sends a follow-up
-	if message.message_type in ["File", "Image"] and not message.text and not message.content:
+	if _wait_for_attachment_question(message, bot):
 		frappe.log_error(
 			f"Skipping file-only message in AI thread: {message.file}", "AI Thread File Skip"
 		)
@@ -344,6 +350,61 @@ def extract_file_content_for_agent(file_url: str, file_extension: str, bot, file
 	return extracted_content
 
 
+def _wait_for_attachment_question(message, bot):
+	return not (message.text or message.content) and (
+		message.message_type == "File"
+		or (message.message_type == "Image" and bot.model_provider == "Local LLM")
+	)
+
+
+def _read_chat_image(message, user: str) -> str:
+	file_url = message.file.split("?fid=", 1)[0]
+	attachment = {
+		"file_url": file_url,
+		"attached_to_doctype": "Raven Message",
+		"attached_to_name": message.name,
+	}
+	file_name = frappe.db.get_value("File", attachment, "name") or frappe.db.get_value(
+		"File",
+		{"file_url": file_url, "owner": user},
+		"name",
+	)
+	file_doc = frappe.get_doc("File", file_name or {"file_url": file_url})
+	if not file_doc.has_permission("read", user=user):
+		raise frappe.PermissionError
+	if file_doc.is_remote_file:
+		raise ValueError("Only uploaded images are supported for photo analysis.")
+	# Read the original bytes on both Frappe v15 and v16.
+	file_doc.validate_file_path()
+	with open(file_doc.get_full_path(), "rb") as source:
+		content = source.read(MAX_IMAGE_BYTES + 1)
+	if len(content) > MAX_IMAGE_BYTES:
+		raise ValueError("Photo exceeds the size limit for chat analysis.")
+	with Image.open(BytesIO(content), formats=("JPEG", "PNG", "WEBP", "GIF")) as image:
+		if getattr(image, "is_animated", False):
+			raise ValueError("OpenAI image analysis requires a still image.")
+		mime_type = image.get_format_mimetype()
+	return f"data:{mime_type};base64,{base64.b64encode(content).decode('ascii')}"
+
+
+def _get_thread_image(channel, message):
+	filters = {"owner": message.owner, "message_type": "Image", "is_bot_message": 0}
+	fields = ["name", "file"]
+	image = frappe.db.get_value(
+		"Raven Message",
+		{**filters, "channel_id": channel.name, "creation": ["<=", message.creation]},
+		fields,
+		as_dict=True,
+		order_by="creation desc",
+	)
+	if not image and cint(channel.is_dm_thread):
+		# Direct-message threads are named after the first message in the parent chat.
+		image = frappe.db.get_value(
+			"Raven Message", {**filters, "name": channel.name}, fields, as_dict=True
+		)
+	return image
+
+
 def process_message_with_agent(
 	message, bot, channel_id: str, is_new_conversation: bool, channel=None
 ):
@@ -357,6 +418,8 @@ def process_message_with_agent(
 	from raven.ai.conversation_file_handler import ConversationFileHandler
 
 	file_handler = ConversationFileHandler(channel_id=channel_id, bot=bot)
+	use_image_input = bot.model_provider != "Local LLM"
+	image_message = None
 
 	# Check if this is a text message following a recent file upload
 	# to combine them into a single AI request
@@ -372,7 +435,7 @@ def process_message_with_agent(
 			filters={
 				"channel_id": channel.name,
 				"owner": message.owner,
-				"message_type": ["in", ["File", "Image"]],
+				"message_type": ["in", ["File"] if use_image_input else ["File", "Image"]],
 				"creation": [">", cutoff_time],
 				"is_bot_message": 0,
 			},
@@ -394,9 +457,7 @@ def process_message_with_agent(
 		# Add file to conversation context
 		file_handler.add_conversation_file(message)
 
-		# If it's just a file upload without any text, don't process it yet
-		# Wait for the user to ask a question about it
-		if not message.text and not message.content:
+		if _wait_for_attachment_question(message, bot):
 			return {"success": True, "response": None}
 
 		# Extract file content immediately (like Assistants API does)
@@ -422,7 +483,15 @@ def process_message_with_agent(
 			content = f"[User uploaded an image: {file_url}]"
 			if extracted_content:
 				content += f"\n\nExtracted content from the image:\n{extracted_content}"
-			if message.text or message.content:
+			if use_image_input:
+				image_message = message
+				filename = file_url.rsplit("/", 1)[-1]
+				caption = message.text
+				if not caption and message.content != filename:
+					caption = message.content
+				prompt = caption or frappe._("Analyse this photo.")
+				content += f"\n\nUser's question: {prompt}"
+			elif message.text or message.content:
 				content += f"\n\nUser's question: {message.text or message.content}"
 	else:
 		content = message.text or message.content or ""
@@ -444,6 +513,9 @@ def process_message_with_agent(
 				file_prefix += "\n"
 
 			content = file_prefix + content
+
+		if use_image_input and not recent_file_message and channel:
+			image_message = _get_thread_image(channel, message)
 
 	# Get conversation history if this is an existing thread
 	conversation_history = []
@@ -474,10 +546,8 @@ def process_message_with_agent(
 				conversation_history.append({"role": "assistant", "content": msg_text})
 			else:
 				if msg.message_type in ["File", "Image"]:
-					# DON'T add historical files - only the current message file should be analyzed
-					# Just add a reference to the file in conversation history
-
-					file_url = msg.file.split("?fid=")[0] if "fid" in msg.file else msg.file
+					# Keep history as text and send at most one actual image per turn.
+					file_url = (msg.file or "").split("?fid=", 1)[0]
 					msg_content = (
 						f"[User uploaded a {'file' if msg.message_type == 'File' else 'image'}: {file_url}]"
 					)
@@ -487,15 +557,33 @@ def process_message_with_agent(
 				else:
 					conversation_history.append({"role": "user", "content": msg_text})
 
-	# Use the improved sync handler
 	try:
-		# Use Agents SDK for both OpenAI and Local LLM
+		image_url = None
+		if image_message and image_message.file:
+			try:
+				image_url = _read_chat_image(image_message, message.owner)
+			except (
+				frappe.DoesNotExistError,
+				frappe.PermissionError,
+				Image.DecompressionBombError,
+				OSError,
+				ValueError,
+			):
+				if message.message_type == "Image":
+					bot.send_message(
+						channel_id=channel_id,
+						text=frappe._("I couldn't open the photo. Try uploading a smaller JPEG, PNG or WebP."),
+					)
+					return
+				content += "\n\n[The previous image attachment could not be opened.]"
+
 		response = handle_ai_request_sync(
 			bot=bot,
 			message=content,
 			channel_id=channel_id,
 			conversation_history=conversation_history,
 			file_handler=file_handler,
+			image_url=image_url,
 		)
 
 		if response["success"]:
@@ -511,23 +599,10 @@ def process_message_with_agent(
 
 			bot.send_message(channel_id=channel_id, text=error_text)
 
-		# Clear the "thinking" message after sending the response
-		frappe.publish_realtime(
-			"ai_event_clear",
-			{
-				"channel_id": channel_id,
-			},
-			doctype="Raven Channel",
-			docname=channel_id,
-			after_commit=True,
-		)
 	except Exception as e:
 		import traceback
 
-		frappe.log_error(
-			f"Error calling handle_ai_request_sync: {str(e)}\n\nTraceback:\n{traceback.format_exc()}",
-			"Raven AI",
-		)
+		frappe.log_error(f"AI message error: {str(e)}\n\nTraceback:\n{traceback.format_exc()}", "Raven AI")
 		# Send error message
 		error_text = "I encountered an error while processing your request."
 		if bot.debug_mode:
@@ -535,12 +610,10 @@ def process_message_with_agent(
 
 		bot.send_message(channel_id=channel_id, text=error_text)
 
-		# Clear the "thinking" message even on error
+	finally:
 		frappe.publish_realtime(
 			"ai_event_clear",
-			{
-				"channel_id": channel_id,
-			},
+			{"channel_id": channel_id},
 			doctype="Raven Channel",
 			docname=channel_id,
 			after_commit=True,

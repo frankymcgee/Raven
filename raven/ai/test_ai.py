@@ -21,7 +21,7 @@ class TestAIRouting(FrappeTestCase):
 
 		self.assertIsNone(settings.temperature)
 		self.assertIsNone(settings.top_p)
-		self.assertEqual(settings.reasoning_effort, "medium")
+		self.assertEqual(settings.reasoning.effort, "medium")
 
 	def test_non_reasoning_model_keeps_sampling_parameters(self):
 		bot = SimpleNamespace(
@@ -36,7 +36,7 @@ class TestAIRouting(FrappeTestCase):
 
 		self.assertEqual(settings.temperature, 0.7)
 		self.assertEqual(settings.top_p, 0.9)
-		self.assertIsNone(settings.reasoning_effort)
+		self.assertIsNone(settings.reasoning)
 
 	def test_local_model_keeps_sampling_parameters(self):
 		bot = SimpleNamespace(
