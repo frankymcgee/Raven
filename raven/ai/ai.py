@@ -374,12 +374,11 @@ def _read_chat_image(message, user: str) -> str:
 		raise frappe.PermissionError
 	if file_doc.is_remote_file:
 		raise ValueError("Only uploaded images are supported for photo analysis.")
-	# Read the original bytes on both Frappe v15 and v16.
-	file_doc.validate_file_path()
-	with open(file_doc.get_full_path(), "rb") as source:
-		content = source.read(MAX_IMAGE_BYTES + 1)
-	if len(content) > MAX_IMAGE_BYTES:
+	if cint(file_doc.file_size) > MAX_IMAGE_BYTES:
 		raise ValueError("Photo exceeds the size limit for chat analysis.")
+	content = file_doc.get_content()
+	if not isinstance(content, bytes) or len(content) > MAX_IMAGE_BYTES:
+		raise ValueError("Photo could not be read within the size limit for chat analysis.")
 	with Image.open(BytesIO(content), formats=("JPEG", "PNG", "WEBP", "GIF")) as image:
 		if getattr(image, "is_animated", False):
 			raise ValueError("OpenAI image analysis requires a still image.")

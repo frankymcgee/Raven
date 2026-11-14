@@ -1,7 +1,5 @@
 import base64
 from io import BytesIO
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
@@ -34,10 +32,8 @@ class TestChatImageInput(TestCase):
 		image = BytesIO()
 		Image.new("RGB", (16, 16), "blue").save(image, "JPEG")
 		self.photo = image.getvalue()
-		directory = self.enterContext(TemporaryDirectory())
-		path = Path(directory) / "photo.jpg"
-		path.write_bytes(self.photo)
-		self.file = Mock(is_remote_file=False, get_full_path=Mock(return_value=path))
+		self.file = Mock(is_remote_file=False, file_size=len(self.photo))
+		self.file.get_content.return_value = self.photo
 		self.get_doc = self.enterContext(patch("raven.ai.ai.frappe.get_doc", return_value=self.file))
 		self.get_value = self.enterContext(patch("raven.ai.ai.frappe.db"))
 		self.get_value.get_value.return_value = "FILE-PHOTO"
@@ -103,7 +99,7 @@ class TestChatImageInput(TestCase):
 			process_message_with_agent(self.image_message, self.bot, "photo-thread", True)
 
 		run.assert_not_called()
-		self.file.get_full_path.assert_not_called()
+		self.file.get_content.assert_not_called()
 		self.assertIn("couldn't open the photo", self.bot.send_message.call_args.kwargs["text"])
 
 	def test_agent_runner_accepts_text_and_photo_inputs(self):
