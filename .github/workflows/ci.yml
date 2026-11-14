@@ -107,7 +107,7 @@ jobs:
       - name: Run Tests
         working-directory: /home/runner/frappe-bench
         run: |
-          bench --site test_site set-config allow_tests true --parse
+          bench --site test_site set-config allow_tests 1 --parse
           bench --site test_site run-tests --app raven
         env:
           TYPE: server
