@@ -40,7 +40,7 @@ def create_channel():
 	channel_doc = frappe.get_doc(
 		{
 			"doctype": "Raven Channel",
-			"channel_name": "Test Channel",
+			"channel_name": f"Test Stream {frappe.generate_hash(length=8)}",
 			"type": "Public",
 			"workspace": "Public Workspace",
 		}
@@ -54,6 +54,8 @@ class TestChatStream(IntegrationTestCase):
 		super().setUp()
 		self.addCleanup(frappe.clear_cache, doctype="Raven Channel")
 		self.addCleanup(frappe.db.rollback)
+		# The legacy last-visit update commits independently of pagination.
+		# Keep these fixtures in the test transaction by requesting read-only pages.
 		self.channel_id = create_channel()
 		# Messages are ordered by an index. Greater the index, newer the message.
 		# So Test Message 99 is the latest message and Test Message 0 is the oldest
@@ -66,7 +68,7 @@ class TestChatStream(IntegrationTestCase):
 		It should also return if older messages are available.
 		Since the API is being tested without a base message, it should not return newer messages
 		"""
-		response = get_messages(self.channel_id)
+		response = get_messages(self.channel_id, update_last_visit=False)
 		self.assertEqual(len(response["messages"]), 20)
 
 		# Loop over and check indexes of all messages
@@ -77,7 +79,7 @@ class TestChatStream(IntegrationTestCase):
 		self.assertEqual(response["has_old_messages"], True)
 		self.assertEqual(response["has_new_messages"], False)
 
-		response = get_messages(self.channel_id, limit=80)
+		response = get_messages(self.channel_id, limit=80, update_last_visit=False)
 		self.assertEqual(len(response["messages"]), 80)
 
 		# Loop over and check indexes of all messages
@@ -88,7 +90,7 @@ class TestChatStream(IntegrationTestCase):
 		self.assertEqual(response["has_old_messages"], True)
 		self.assertEqual(response["has_new_messages"], False)
 
-		response = get_messages(self.channel_id, limit=100)
+		response = get_messages(self.channel_id, limit=100, update_last_visit=False)
 		self.assertEqual(len(response["messages"]), 100)
 
 		# Loop over and check indexes of all messages
@@ -99,7 +101,7 @@ class TestChatStream(IntegrationTestCase):
 		self.assertEqual(response["has_old_messages"], False)
 		self.assertEqual(response["has_new_messages"], False)
 
-		response = get_messages(self.channel_id, limit=1000)
+		response = get_messages(self.channel_id, limit=1000, update_last_visit=False)
 		self.assertEqual(len(response["messages"]), 100)
 
 		# Loop over and check indexes of all messages
@@ -119,7 +121,7 @@ class TestChatStream(IntegrationTestCase):
 			"Raven Message", {"text": "Test Message 50", "channel_id": self.channel_id}, "name"
 		)
 
-		response = get_messages(self.channel_id, base_message=base_message_id)
+		response = get_messages(self.channel_id, base_message=base_message_id, update_last_visit=False)
 
 		# We should get 20 messages overall
 		self.assertEqual(len(response["messages"]), 20)
@@ -141,7 +143,7 @@ class TestChatStream(IntegrationTestCase):
 		base_message_id = frappe.db.get_value(
 			"Raven Message", {"text": "Test Message 95", "channel_id": self.channel_id}, "name"
 		)
-		response = get_messages(self.channel_id, base_message=base_message_id)
+		response = get_messages(self.channel_id, base_message=base_message_id, update_last_visit=False)
 
 		# We should get 15 messages overall
 		self.assertEqual(len(response["messages"]), 15)
@@ -163,7 +165,7 @@ class TestChatStream(IntegrationTestCase):
 		base_message_id = frappe.db.get_value(
 			"Raven Message", {"text": "Test Message 5", "channel_id": self.channel_id}, "name"
 		)
-		response = get_messages(self.channel_id, base_message=base_message_id)
+		response = get_messages(self.channel_id, base_message=base_message_id, update_last_visit=False)
 
 		# We should get 15 messages overall
 		self.assertEqual(len(response["messages"]), 15)
@@ -238,7 +240,7 @@ class TestChatStream(IntegrationTestCase):
 			"Raven Message", {"text": "Test Message 50", "channel_id": self.channel_id}, "name"
 		)
 
-		response = get_newer_messages(self.channel_id, base_message_id)
+		response = get_newer_messages(self.channel_id, base_message_id, update_last_visit=False)
 
 		# We should get 20 messages overall
 		self.assertEqual(len(response["messages"]), 20)
@@ -251,7 +253,9 @@ class TestChatStream(IntegrationTestCase):
 			self.assertEqual(message.text, f"Test Message {70-i}")
 
 		# Increase the limit to 50
-		response = get_newer_messages(self.channel_id, base_message_id, limit=50)
+		response = get_newer_messages(
+			self.channel_id, base_message_id, limit=50, update_last_visit=False
+		)
 
 		# We should get 49 newer messages overall (51 to 99) - the 50th message is the base message + has a timestamp equal to the 49th message
 		self.assertEqual(len(response["messages"]), 49)
