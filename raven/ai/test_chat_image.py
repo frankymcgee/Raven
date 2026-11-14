@@ -35,8 +35,8 @@ class TestChatImageInput(TestCase):
 		self.file = Mock(is_remote_file=False, file_size=len(self.photo))
 		self.file.get_content.return_value = self.photo
 		self.get_doc = self.enterContext(patch("raven.ai.ai.frappe.get_doc", return_value=self.file))
-		self.get_value = self.enterContext(patch("raven.ai.ai.frappe.db"))
-		self.get_value.get_value.return_value = "FILE-PHOTO"
+		self.get_value = Mock(return_value="FILE-PHOTO")
+		self.enterContext(patch.object(frappe, "db", new=SimpleNamespace(get_value=self.get_value)))
 		self.publish = self.enterContext(patch("raven.ai.ai.frappe.publish_realtime"))
 		self.enterContext(patch("raven.ai.ai.frappe._", side_effect=lambda message: message))
 		self.enterContext(patch("raven.ai.ai.extract_file_content_for_agent", return_value=""))
@@ -80,7 +80,7 @@ class TestChatImageInput(TestCase):
 			text="Is there a label?",
 		)
 		channel = SimpleNamespace(name=self.image_message.name, is_dm_thread=True)
-		self.get_value.get_value.side_effect = [None, self.image_message, "FILE-PHOTO"]
+		self.get_value.side_effect = [None, self.image_message, "FILE-PHOTO"]
 		with (
 			patch("raven.ai.ai.frappe.get_all", return_value=[]),
 			patch(
@@ -90,6 +90,7 @@ class TestChatImageInput(TestCase):
 		):
 			process_message_with_agent(message, self.bot, channel.name, False, channel)
 
+		run.assert_called_once()
 		self.assertEqual(run.call_args.kwargs["message"], message.text)
 		self.assertTrue(run.call_args.kwargs["image_url"].startswith("data:image/jpeg;base64,"))
 

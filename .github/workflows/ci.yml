@@ -108,6 +108,7 @@ jobs:
         working-directory: /home/runner/frappe-bench
         run: |
           bench --site test_site set-config allow_tests 1 --parse
+          bench --site test_site execute raven.api.search.rebuild_search_index
           bench --site test_site run-tests --app raven
         env:
           TYPE: server
