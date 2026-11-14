@@ -6,13 +6,19 @@ on:
       - main
     paths:
       - raven/**
+      - pyproject.toml
+      - .github/workflows/ci.yml
+      - .github/helper/install_dependencies.sh
   pull_request:
     paths:
       - raven/**
+      - pyproject.toml
+      - .github/workflows/ci.yml
+      - .github/helper/install_dependencies.sh
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Server
 
     services:
@@ -29,30 +35,36 @@ jobs:
         ports:
           - 12000:6379
       mariadb:
-        image: anandology/mariadb-utf8mb4:10.3
+        image: mariadb:11.8
         env:
-          MYSQL_ROOT_PASSWORD: root
+          MARIADB_ROOT_PASSWORD: root
         ports:
           - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
 
     steps:
       - name: Clone
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
       - name: Setup Node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           check-latest: true
 
       - name: Cache pip
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py', '**/setup.cfg') }}
@@ -64,7 +76,7 @@ jobs:
         id: yarn-cache-dir-path
         run: 'echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT'
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         id: yarn-cache
         with:
           path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
@@ -74,18 +86,19 @@ jobs:
 
       - name: Setup
         run: |
-          bash ${GITHUB_WORKSPACE}/.github/helper/install_dependencies.sh
-          pip install frappe-bench
-          bench init --skip-redis-config-generation --skip-assets --python "$(which python)" ~/frappe-bench
-          mysql --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'"
-          mysql --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL collation_server = 'utf8mb4_unicode_ci'"
+          bash "$GITHUB_WORKSPACE/.github/helper/install_dependencies.sh"
+          python -m pip install frappe-bench==5.31.1 uv
+          bench init --frappe-branch version-16 --skip-redis-config-generation \
+            --skip-assets --no-backups --python "$(command -v python)" "$HOME/frappe-bench"
 
       - name: Install
         working-directory: /home/runner/frappe-bench
         run: |
-          bench get-app https://github.com/frappe/Raven.git $GITHUB_WORKSPACE
+          bench get-app --skip-assets "file://$GITHUB_WORKSPACE"
+          test "$(git -C apps/raven rev-parse HEAD)" = "$GITHUB_SHA"
           bench setup requirements
-          bench new-site --db-root-password root --admin-password admin test_site
+          bench new-site --db-host 127.0.0.1 --db-port 3306 \
+            --db-root-password root --admin-password admin test_site
           bench --site test_site install-app raven
           bench build
         env:
@@ -94,7 +107,8 @@ jobs:
       - name: Run Tests
         working-directory: /home/runner/frappe-bench
         run: |
-          bench --site test_site set-config allow_tests true
+          bench --site test_site set-config allow_tests 1 --parse
+          bench --site test_site execute raven.api.search.rebuild_search_index
           bench --site test_site run-tests --app raven
         env:
           TYPE: server

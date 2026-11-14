@@ -11,23 +11,17 @@ from raven.links import (
 
 
 class TestPreviewBlocklist(IntegrationTestCase):
+	def setUp(self):
+		super().setUp()
+		self.addCleanup(frappe.clear_document_cache, "Raven Settings", "Raven Settings")
+		self.addCleanup(frappe.db.rollback)
+
 	def set_blocklist(self, rows):
-		"""
-		Write blocklist rows to Raven Settings. Saving clears the cached
-		doc, which is what is_preview_blocked reads. addCleanup restores —
-		the class-level rollback alone would leave a stale settings doc in
-		the document cache for later test classes.
-		"""
 		settings = frappe.get_doc("Raven Settings")
+		settings.push_notification_service = "Frappe Cloud"
 		settings.blocked_links = []
 		for link, match_exact in rows:
 			settings.append("blocked_links", {"link": link, "match_exact": match_exact})
-		settings.save(ignore_permissions=True)
-		self.addCleanup(self.clear_blocklist)
-
-	def clear_blocklist(self):
-		settings = frappe.get_doc("Raven Settings")
-		settings.blocked_links = []
 		settings.save(ignore_permissions=True)
 
 	def test_domain_rows_block_the_whole_domain(self):

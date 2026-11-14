@@ -8,7 +8,10 @@ EXTRA_TEST_RECORD_DEPENDENCIES = ["User", "Raven User"]
 
 class TestInviteUser(IntegrationTestCase):
 	def setUp(self):
+		super().setUp()
 		frappe.set_user("Administrator")
+		self.addCleanup(frappe.clear_cache)
+		self.addCleanup(frappe.db.rollback)
 		self.workspace = frappe.get_doc(
 			{
 				"doctype": "Raven Workspace",
@@ -33,15 +36,6 @@ class TestInviteUser(IntegrationTestCase):
 				"workspace": self.workspace.name,
 			}
 		).insert()
-
-	def tearDown(self):
-		frappe.set_user("Administrator")
-		for email in ("invitee@example.com",):
-			if frappe.db.exists("User", email):
-				frappe.delete_doc("User", email, force=True)
-		self.channel.delete()
-		self.workspace.delete()
-		self.other_workspace.delete()
 
 	def _is_member(self, user, workspace):
 		return bool(frappe.db.exists("Raven Workspace Member", {"workspace": workspace, "user": user}))

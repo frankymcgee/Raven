@@ -21,6 +21,7 @@ from agents import (
 	LocalShellTool,
 	ModelSettings,
 	OpenAIProvider,
+	RunConfig,
 	Runner,
 	Tool,
 	WebSearchTool,
@@ -28,6 +29,7 @@ from agents import (
 )
 from frappe import _
 from openai import AsyncOpenAI
+from openai.types.shared import Reasoning
 
 from .functions import (
 	cancel_document,
@@ -38,7 +40,6 @@ from .functions import (
 	submit_document,
 	update_document,
 )
-
 
 OPENAI_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
@@ -53,7 +54,7 @@ def get_model_settings(bot_doc) -> ModelSettings:
 
 	if uses_openai_reasoning_parameters(bot_doc):
 		if bot_doc.reasoning_effort:
-			settings.reasoning_effort = bot_doc.reasoning_effort
+			settings.reasoning = Reasoning(effort=bot_doc.reasoning_effort)
 		return settings
 
 	settings.temperature = bot_doc.temperature
@@ -446,7 +447,13 @@ IMPORTANT: When calling tools, the SDK will handle the tool execution automatica
 
 # Async handler function that can be called from sync context
 async def handle_ai_request_async(
-	bot, message: str, channel_id: str, conversation_history: list = None, file_handler=None
+	bot,
+	message: str,
+	channel_id: str,
+	conversation_history: list = None,
+	file_handler=None,
+	*,
+	image_url: str | None = None,
 ):
 	"""Handle AI request asynchronously"""
 	try:
@@ -463,14 +470,19 @@ async def handle_ai_request_async(
 				"error": "Agent creation failed",
 			}
 
-		# Build input with proper conversation history format
-		# Note: File content is now extracted upfront in ai.py and included in the message
-		if conversation_history:
+		current_message = message
+		if image_url:
+			current_message = [
+				{"type": "input_text", "text": message},
+				{"type": "input_image", "image_url": image_url, "detail": "high"},
+			]
+
+		if conversation_history or image_url:
 			# Convert conversation history to proper format for the SDK
 			input_items = []
 
 			# Add conversation history as separate items
-			for msg in conversation_history:
+			for msg in conversation_history or []:
 				# Clean HTML and extract plain text content
 				content = msg["content"]
 
@@ -490,7 +502,7 @@ async def handle_ai_request_async(
 					input_items.append({"role": "assistant", "content": content})  # Use "role" not "type"
 
 			# Add current message
-			input_items.append({"role": "user", "content": message})
+			input_items.append({"role": "user", "content": current_message})
 			full_input = input_items
 		else:
 			# No history, just the current message
@@ -503,7 +515,8 @@ async def handle_ai_request_async(
 
 			# Use Runner.run as a static method (not an instance)
 			# Set max_turns to prevent infinite loops
-			result = await Runner.run(agent, full_input, max_turns=5)
+			run_config = RunConfig(trace_include_sensitive_data=False) if image_url else None
+			result = await Runner.run(agent, full_input, max_turns=5, run_config=run_config)
 
 		except (TypeError, openai.NotFoundError) as e:
 			# Handle both TypeError and NotFoundError (404) with fallback
@@ -557,8 +570,10 @@ async def handle_ai_request_async(
 								{"role": msg["role"], "content": [{"type": "text", "text": msg["content"]}]}
 							)
 
-					# Add current user message
-					messages.append({"role": "user", "content": [{"type": "text", "text": message}]})
+					user_content = [{"type": "text", "text": message}]
+					if image_url:
+						user_content.append({"type": "image_url", "image_url": {"url": image_url, "detail": "high"}})
+					messages.append({"role": "user", "content": user_content})
 
 					# Create the API call with or without tools
 					api_params = {
@@ -599,17 +614,13 @@ async def handle_ai_request_async(
 
 							# If we have tool results, make another API call with the results
 							if tool_results:
-								# Add assistant message with tool calls
+								# Keep the original messages and attachments for the tool follow-up.
 								assistant_message = choice.message.model_dump()
 								# Fix assistant message content format
 								if isinstance(assistant_message.get("content"), str):
 									assistant_message["content"] = [{"type": "text", "text": assistant_message["content"]}]
 
-								messages = [
-									{"role": "system", "content": [{"type": "text", "text": agent.instructions}]},
-									{"role": "user", "content": [{"type": "text", "text": str(full_input)}]},
-									assistant_message,
-								]
+								messages = [*messages, assistant_message]
 
 								# Add tool results
 								for result in tool_results:
@@ -764,14 +775,22 @@ async def handle_ai_request_async(
 
 
 def handle_ai_request_sync(
-	bot, message: str, channel_id: str, conversation_history: list = None, file_handler=None
+	bot,
+	message: str,
+	channel_id: str,
+	conversation_history: list = None,
+	file_handler=None,
+	*,
+	image_url: str | None = None,
 ):
 	"""Synchronous wrapper for async AI request handling"""
 	loop = asyncio.new_event_loop()
 	asyncio.set_event_loop(loop)
 	try:
 		return loop.run_until_complete(
-			handle_ai_request_async(bot, message, channel_id, conversation_history, file_handler)
+			handle_ai_request_async(
+				bot, message, channel_id, conversation_history, file_handler, image_url=image_url
+			)
 		)
 	finally:
 		loop.close()

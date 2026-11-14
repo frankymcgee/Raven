@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -183,7 +184,18 @@ class TestRavenScheduledMessage(IntegrationTestCase):
 		frappe.set_user("Administrator")
 		frappe.delete_doc("Raven Channel Member", member_name)
 
-		send_due_messages()
+		# The scheduler normally starts with committed rows. Keep the fixtures
+		# available on a failed delivery without committing this test's data.
+		database = frappe.local.db
+		database.savepoint("scheduled_message_fixtures")
+		rollback = database.rollback
+		with (
+			patch.object(database, "commit"),
+			patch.object(
+				database, "rollback", side_effect=lambda: rollback(save_point="scheduled_message_fixtures")
+			),
+		):
+			send_due_messages()
 
 		bad.reload()
 		good.reload()
